@@ -1,0 +1,518 @@
+---
+title: "STAT 432 project"
+output: html_document
+---
+DATA PREPARATION :
+Reference : https://www.kaggle.com/datasets/samdemharter/brca-multiomics-tcga/versions/3?select=data.csv 
+# IMPORT DATA
+```{r}
+brca = read.csv("brca_data_w_subtypes.csv")
+# PR.Status
+brca_pr = subset(brca, PR.Status == "Positive" | PR.Status == "Negative", select= -c(vital.status, ER.Status, HER2.Final.Status, histological.type))
+```
+
+```{r}
+# Changing "Positive" to 1, "Negative" to 0
+brca_pr[brca_pr["PR.Status"] == "Positive","PR.Status"] = 1
+brca_pr[brca_pr["PR.Status"] == "Negative","PR.Status"] = 0
+```
+
+```{r}
+# ER.Status
+brca_er = subset(brca, ER.Status == "Positive" | ER.Status == "Negative", select= -c(vital.status, PR.Status, HER2.Final.Status, histological.type))
+```
+
+# Changing "Positive" to 1, "Negative" to 0
+```{r}
+brca_er[brca_er["ER.Status"] == "Positive","ER.Status"] = 1
+brca_er[brca_er["ER.Status"] == "Negative","ER.Status"] = 0
+```
+# HER2.Final.Status
+```{r}
+brca_her2 = subset(brca, HER2.Final.Status == "Positive" | HER2.Final.Status == "Negative", select= -c(vital.status, ER.Status, PR.Status, histological.type))
+```
+
+# Changing "Positive" to 1, "Negative" to 0
+```{r}
+brca_her2[brca_her2["HER2.Final.Status"] == "Positive","HER2.Final.Status"] = 1
+brca_her2[brca_her2["HER2.Final.Status"] == "Negative","HER2.Final.Status"] = 0
+```
+
+
+# histological.type
+```{r}
+brca_hist = subset(brca, histological.type == "infiltrating ductal carcinoma" | histological.type == "infiltrating lobular carcinoma", select= -c(vital.status, ER.Status, HER2.Final.Status, PR.Status))
+```
+
+# Changing "infiltrating ductal carcinoma" to 1, "infiltrating lobular carcinoma" to 0
+```{r}
+brca_hist[brca_hist["histological.type"] == "infiltrating ductal carcinoma","histological.type"] = 1
+brca_hist[brca_hist["histological.type"] == "infiltrating lobular carcinoma","histological.type"] = 0
+```
+
+
+
+
+Missing value checking : 
+```{r}
+table(as.matrix(colSums(is.na(brca))))
+```
+
+
+
+Categorical Variable 
+mu_:
+```{r}
+mu_data = brca[,1465:1713]
+mu_names = colnames(mu_data)
+count_0 = rep(NA, 249)
+count_1 = rep(NA, 249)
+
+freq_mu = data.frame(mu_names, count_0, count_1)
+counts = table(mu_data[1])
+
+for (i in 1:nrow(freq_mu)){
+  counts = table(mu_data[i])
+  freq_mu[i, "count_0"] = counts["0"]
+  freq_mu[i, "count_1"] = counts["1"]
+}
+```
+
+
+cn_:
+```{r}
+cn_data = brca[,605:1464]
+cn_names = colnames(cn_data)
+count_n2 = rep(NA, 860)
+count_n1 = rep(NA, 860)
+count_0 = rep(NA, 860)
+count_p1 = rep(NA, 860)
+count_p2 = rep(NA, 860)
+
+freq_cn = data.frame(cn_names, count_n2, count_n1, count_0, count_p1, count_p2)
+
+for (i in 1:nrow(freq_cn)){
+  counts = table(cn_data[i])
+  freq_cn[i, "count_n2"] = counts["-2"]
+  freq_cn[i, "count_n1"] = counts["-1"]
+  freq_cn[i, "count_0"] = counts["0"]
+  freq_cn[i, "count_p1"] = counts["1"]
+  freq_cn[i, "count_p2"] = counts["2"]
+}
+
+```
+
+
+# replacing NAs with 0 for convenience
+```{r}
+freq_cn[is.na(freq_cn)] = 0
+```
+
+
+Continuous Variable
+rs_:
+
+```{r}
+rs_data = brca[,1:604]
+rs_names = colnames(rs_data)
+
+rs_outliers = data.frame(matrix(NA, nrow = 604, ncol = 160))
+rs_outliers["rs_names"] = rs_names
+rs_outliers = rs_outliers[,c(161,1:160)]
+```
+
+
+
+
+## complicated version
+```{r}
+for (i in 1:nrow(rs_outliers)) {
+ outliers = boxplot.stats(brca[,i])$out
+ if (length(outliers) == 0){
+   rs_outliers[i,2] = 0
+ } else{
+   for (j in 1:length(outliers)){
+      rs_outliers[i,1+j] = outliers[j]
+  }
+ }
+}
+
+```
+
+
+## count (simplified version)
+```{r}
+counts = rep(NA, 604)
+rs_outliers_simplified = data.frame(rs_names, counts)
+
+for (i in 1:nrow(rs_outliers_simplified)) {
+ outliers = boxplot.stats(brca[,i])$out
+ rs_outliers_simplified[i,2] = length(outliers)
+}
+
+```
+
+
+pp_: number of outliers for each protein level
+#pp
+```{r}
+pp_data = brca[,1714:1936]
+pp_names = colnames(pp_data)
+
+counts_pp = rep(NA, 223)
+pp_outliers_simplified = data.frame(pp_names, counts_pp)
+
+
+for (i in 1:nrow(pp_outliers_simplified)) {
+ outliers = boxplot.stats(brca[,i+1713])$out
+ pp_outliers_simplified[i,2] = length(outliers)
+}
+```
+
+
+## Modeling for PR.status (svm method)
+```{r}
+brca_pr = subset(brca, PR.Status == "Positive" | PR.Status == "Negative", select= -c(vital.status, ER.Status, HER2.Final.Status, histological.type))
+
+brca_pr[brca_pr["PR.Status"] == "Positive","PR.Status"] = 1
+brca_pr[brca_pr["PR.Status"] == "Negative","PR.Status"] = 0
+
+cost.grid = expand.grid(C = seq(0.01, 1, length = 10))
+train_control = trainControl(method="cv", number=10)
+svm2 <- train(as.factor(PR.Status)~., data =brca_pr, method = "svmLinear", trControl = train_control, tuneGrid = cost.grid)
+testpred = predict(svm2,  newdata = brca_pr)
+table(testpred, as.factor(brca_pr$PR.Status))
+
+```
+
+
+## Modeling for PR.status (lda method)
+```{r}
+library(MASS)
+x= data.matrix(brca_pr[, -1937])
+y= brca_pr$PR.Status
+dig.lda=lda(x,y)
+Ytest.pred = predict(dig.lda, x)
+table(y,Ytest.pred$class)
+
+```
+
+
+## Modeling for Histological.Type (Logistic regression with Elastic Net penalty)
+# histological.type
+```{r}
+library(glmnet)
+library(ROCR)
+
+## Logistic regression
+set.seed(1)
+# use cv.glmnet
+alphas = seq(0.1,0.9,0.1)
+cvm = matrix(NA, nrow = 9, ncol = 2)
+for (i in 1:9){
+  cvm[i,1] = alphas[i]
+  cv_glm = cv.glmnet(x = data.matrix(brca_hist[,1:1936]),
+                         y = brca_hist[,1937],
+                         nfolds = 10,
+                         type.measure = "auc",
+                         family = "binomial",
+                         alpha = alphas[i])
+  cvm[i,2] = min(cv_glm$cvm)
+}
+
+#alpha value with the lowest cvm
+cvm[which.min(cvm[,2])]
+
+elst_glm = cv.glmnet(x = data.matrix(brca_hist[,1:1936]),
+                         y = brca_hist[,1937],
+                         nfolds = 10,
+                         type.measure = "auc",
+                         family = "binomial",
+                         alpha = 0.8)
+
+pred = predict(elst_glm, newx = as.matrix(brca_hist[,1:1936]), type = "response")
+
+# confusion table
+ctab = table(pred > 0.7, brca_hist$histological.type)
+(ctab[2,1] + ctab[1,2])/sum(ctab)
+
+# found out that cutoff of 0.7 gives the lowest classification error
+# Unsure which classification error to use
+
+# auc
+roc = prediction(pred, brca_hist$histological.type)
+pfm = performance(roc, "tpr", "fpr")
+plot(pfm, colorize = TRUE)
+
+ # Area under the curve
+performance(roc, measure = "auc")@y.values
+```
+
+
+## Modeling for Histological.Type (KNN method)
+
+```{r}
+library(class)
+#KNN tuning K
+set.seed(1)
+train_id = sample(430, replace = FALSE)
+train_hist = brca_hist[train_id,]
+test_hist = brca_hist[-train_id,]
+
+# running For loop to find the k that gives highest AUC
+k_values = seq(110,118,1)
+auc_values = rep(NA, 9)
+k_results = data.frame(k_values, auc_values)
+
+for (i in 1:length(k_values)){
+  knn_fit_prob = knn(train_hist[,-1937], test_hist[,-1937],train_hist[,1937], k = k_values[i], prob = TRUE)
+  prob = attr(knn_fit_prob, "prob")
+  roc = prediction(prob, test_hist$histological.type)
+  k_results[i,2] = performance(roc, measure = "auc")@y.values[[1]]
+}
+
+## k value with the highest AUC
+k_results[which.max(k_results$auc_values),]
+
+## Refit knn model using the selected k value
+
+knn_fit = knn(train_hist[,-1937], test_hist[,-1937],train_hist[,1937], k = 114, prob = TRUE)
+prob = attr(knn_fit, "prob")
+roc = prediction(prob, test_hist$histological.type)
+performance(roc, measure = "auc")@y.values[[1]]
+pfm2 = performance(roc, "tpr", "fpr")
+plot(pfm2, colorize = TRUE)
+```
+
+
+## VARIABLE SELECTION
+```{r}
+set.seed(1)
+cv_group = sample(1:3, 705, replace = TRUE)
+brca["ID"] = cv_group
+# subset data
+
+# PR.Status
+brca_pr = subset(brca, PR.Status == "Positive" | PR.Status == "Negative", select= -c(vital.status, ER.Status, HER2.Final.Status, histological.type))
+# Changing "Positive" to 1, "Negative" to 0
+brca_pr[brca_pr["PR.Status"] == "Positive","PR.Status"] = 1
+brca_pr[brca_pr["PR.Status"] == "Negative","PR.Status"] = 0
+
+# ER.Status
+brca_er = subset(brca, ER.Status == "Positive" | ER.Status == "Negative", select= -c(vital.status, PR.Status, HER2.Final.Status, histological.type))
+# Changing "Positive" to 1, "Negative" to 0
+brca_er[brca_er["ER.Status"] == "Positive","ER.Status"] = 1
+brca_er[brca_er["ER.Status"] == "Negative","ER.Status"] = 0
+
+# HER2.Final.Status
+brca_her2 = subset(brca, HER2.Final.Status == "Positive" | HER2.Final.Status == "Negative", select= -c(vital.status, ER.Status, PR.Status, histological.type))
+# Changing "Positive" to 1, "Negative" to 0
+brca_her2[brca_her2["HER2.Final.Status"] == "Positive","HER2.Final.Status"] = 1
+brca_her2[brca_her2["HER2.Final.Status"] == "Negative","HER2.Final.Status"] = 0
+
+
+# histological.type
+brca_hist = subset(brca, histological.type == "infiltrating ductal carcinoma" | histological.type == "infiltrating lobular carcinoma", select= -c(vital.status, ER.Status, HER2.Final.Status, PR.Status))
+# Changing "infiltrating ductal carcinoma" to 1, "infiltrating lobular carcinoma" to 0
+brca_hist[brca_hist["histological.type"] == "infiltrating ductal carcinoma","histological.type"] = 1
+brca_hist[brca_hist["histological.type"] == "infiltrating lobular carcinoma","histological.type"] = 0
+```
+
+## 50 VARIABLES SELECTED 
+```{r}
+var_names =  c("rs_ESR1", "rs_FSIP1","rs_TFF1","rs_AGR3","rs_AGR2","rs_BCAS1","rs_FOXA1","rs_NAT1","cn_NAT1","mu_FOXA1","cn_FOXA1","mu_GATA3","cn_GATA3","mu_TBX3","mu_PTEN","mu_TP53","pp_LKB1","mu_CDH1","cn_CDH1","mu_ATM","pp_ATM","mu_MAP3K1","pp_BRCA2","rs_PGR","cn_PGR", "pp_XBP1","mu_ERBB3","rs_ERBB4","pp_EGFR","cn_MELK","rs_MMP11","cn_MMP11","rs_TMEM45B","cn_TMEM45B","rs_KRT17", "cn_KRT17","rs_KRT5","rs_SFRP1","cn_SFRP1","rs_KRT14","cn_KRT14","rs_APOD","cn_FGFR4","rs_MIA","cn_MIA","rs_DHRS2","cn_FOXC1","rs_HMGCS2","cn_CDH3","cn_MAPT")
+length(var_names)
+```
+
+
+## PREDICTING PR.STATUS
+```{r}
+set.seed(1)
+# PR.Status
+
+brca_pr_50 = brca_pr[,c(var_names,"PR.Status","ID")]
+
+# test AUC
+
+alphas = seq(0.1,0.9,0.1)
+avg_auc = rep(NA, 3)
+
+cvm = matrix(NA, nrow = 9, ncol = 2)
+
+for (i in 1:3){
+  fold_data_train = subset(brca_pr_50, ID == i, select= -c(ID))
+  fold_data_test = subset(brca_pr_50, ID != i, select= -c(ID))
+  for (j in 1:9){
+    cvm[j,1] = alphas[j]
+    cv_glm = cv.glmnet(x = data.matrix(fold_data_train[,1:50]),
+                         y = fold_data_train[,51],
+                         nfolds = 10,
+                         type.measure = "auc",
+                         family = "binomial",
+                         alpha = alphas[j])
+    cvm[j,2] = mean(cv_glm$cvm)
+  }
+  elst_glm = cv.glmnet(x = data.matrix(fold_data_train[,1:50]),
+                         y = fold_data_train[,51],
+                         nfolds = 10,
+                         type.measure = "auc",
+                         family = "binomial",
+                         alpha = cvm[which.min(cvm[,2])])
+pred = predict(elst_glm, newx = as.matrix(fold_data_test[,1:50]), type = "response")
+roc = prediction(pred, fold_data_test$PR.Status)
+
+ # Area under the curve
+avg_auc[i] = performance(roc, measure = "auc")@y.values
+}
+
+(avg_auc[[1]] + avg_auc[[2]] + avg_auc[[3]])/3
+```
+
+
+## PREDICTING ER.STATUS
+```{r}
+# ER.Status
+set.seed(1)
+brca_er_50 = brca_er[,c(var_names,"ER.Status","ID")]
+
+# test AUC
+
+alphas = seq(0.1,0.9,0.1)
+avg_auc = rep(NA, 3)
+
+cvm = matrix(NA, nrow = 9, ncol = 2)
+
+for (i in 1:3){
+  fold_data_train = subset(brca_er_50, ID == i, select= -c(ID))
+  fold_data_test = subset(brca_er_50, ID != i, select= -c(ID))
+  for (j in 1:9){
+    cvm[j,1] = alphas[j]
+    cv_glm = cv.glmnet(x = data.matrix(fold_data_train[,1:50]),
+                         y = fold_data_train[,51],
+                         nfolds = 10,
+                         type.measure = "auc",
+                         family = "binomial",
+                         alpha = alphas[j])
+    cvm[j,2] = mean(cv_glm$cvm)
+  }
+  elst_glm = cv.glmnet(x = data.matrix(fold_data_train[,1:50]),
+                         y = fold_data_train[,51],
+                         nfolds = 10,
+                         type.measure = "auc",
+                         family = "binomial",
+                         alpha = cvm[which.min(cvm[,2])])
+pred = predict(elst_glm, newx = as.matrix(fold_data_test[,1:50]), type = "response")
+roc = prediction(pred, fold_data_test$ER.Status)
+
+ # Area under the curve
+avg_auc[i] = performance(roc, measure = "auc")@y.values
+}
+
+(avg_auc[[1]] + avg_auc[[2]] + avg_auc[[3]])/3
+```
+
+
+## PREDICTING HER2.FINAL.STATUS
+```{r}
+# HER2
+set.seed(1)
+brca_her2_50 = brca_her2[,c(var_names,"HER2.Final.Status","ID")]
+
+# test AUC
+
+alphas = seq(0.1,0.9,0.1)
+avg_auc = rep(NA, 3)
+
+cvm = matrix(NA, nrow = 9, ncol = 2)
+
+for (i in 1:3){
+  fold_data_train = subset(brca_her2_50, ID == i, select= -c(ID))
+  fold_data_test = subset(brca_her2_50, ID != i, select= -c(ID))
+  for (j in 1:9){
+    cvm[j,1] = alphas[j]
+    cv_glm = cv.glmnet(x = data.matrix(fold_data_train[,1:50]),
+                         y = fold_data_train[,51],
+                         nfolds = 10,
+                         type.measure = "auc",
+                         family = "binomial",
+                         alpha = alphas[j])
+    cvm[j,2] = mean(cv_glm$cvm)
+  }
+  elst_glm = cv.glmnet(x = data.matrix(fold_data_train[,1:50]),
+                         y = fold_data_train[,51],
+                         nfolds = 10,
+                         type.measure = "auc",
+                         family = "binomial",
+                         alpha = cvm[which.min(cvm[,2])])
+pred = predict(elst_glm, newx = as.matrix(fold_data_test[,1:50]), type = "response")
+roc = prediction(pred, fold_data_test$HER2.Final.Status)
+
+ # Area under the curve
+avg_auc[i] = performance(roc, measure = "auc")@y.values
+}
+
+(avg_auc[[1]] + avg_auc[[2]] + avg_auc[[3]])/3
+```
+
+## PREDICTING HISTOLOGICAL.TYPE
+```{r}
+# histological.type
+set.seed(1)
+brca_hist_50 = brca_hist[,c(var_names,"histological.type","ID")]
+
+# test AUC
+
+alphas = seq(0.1,0.9,0.1)
+avg_auc = rep(NA, 3)
+
+cvm = matrix(NA, nrow = 9, ncol = 2)
+
+for (i in 1:3){
+  fold_data_train = subset(brca_hist_50, ID == i, select= -c(ID))
+  fold_data_test = subset(brca_hist_50, ID != i, select= -c(ID))
+  for (j in 1:9){
+    cvm[j,1] = alphas[j]
+    cv_glm = cv.glmnet(x = data.matrix(fold_data_train[,1:50]),
+                         y = fold_data_train[,51],
+                         nfolds = 10,
+                         type.measure = "auc",
+                         family = "binomial",
+                         alpha = alphas[j])
+    cvm[j,2] = mean(cv_glm$cvm)
+  }
+  elst_glm = cv.glmnet(x = data.matrix(fold_data_train[,1:50]),
+                         y = fold_data_train[,51],
+                         nfolds = 10,
+                         type.measure = "auc",
+                         family = "binomial",
+                         alpha = cvm[which.min(cvm[,2])])
+pred = predict(elst_glm, newx = as.matrix(fold_data_test[,1:50]), type = "response")
+roc = prediction(pred, fold_data_test$histological.type)
+
+ # Area under the curve
+avg_auc[i] = performance(roc, measure = "auc")@y.values
+}
+
+(avg_auc[[1]] + avg_auc[[2]] + avg_auc[[3]])/3
+```
+
+RESULTS:
+PR.Status: 0.9024917
+ER.Status: 0.9463468
+HER2.Final.Status: 0.6845975
+histological.type: 0.8774072
+
+Average: 0.85269212
+
+
+
+
+
+
+
+
+
+
+
+
+
